@@ -41,6 +41,22 @@ describe('tools.fuzz_encode_lib', function()
     end)
   end)
 
+  describe('env_from_args', function()
+    it('turns KEY=VALUE args into config environment entries', function()
+      local env = fuzz.env_from_args({
+        'DURATION=2',
+        'INTERVAL=1',
+        'SEED=123',
+        'WORKERS=1',
+      })
+
+      assert.are.equal('2', env.DURATION)
+      assert.are.equal('1', env.INTERVAL)
+      assert.are.equal('123', env.SEED)
+      assert.are.equal('1', env.WORKERS)
+    end)
+  end)
+
   describe('new_rng', function()
     it('is deterministic for the same seed', function()
       local a = fuzz.new_rng(123)

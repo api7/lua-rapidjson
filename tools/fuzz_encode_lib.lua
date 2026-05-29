@@ -1475,4 +1475,15 @@ function M.generate_case(rng, case_id, rapidjson)
   }
 end
 
+function M.env_from_args(args)
+  local env = {}
+  for _, arg in ipairs(args or {}) do
+    local key, value = string.match(arg, '^([%w_]+)=(.*)$')
+    if key then
+      env[key] = value
+    end
+  end
+  return env
+end
+
 return M
