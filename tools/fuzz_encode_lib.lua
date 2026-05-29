@@ -149,10 +149,14 @@ local STRING_PARTS = {
 }
 
 local function json_null(rapidjson)
-  if rapidjson and rapidjson.null ~= nil then
-    return rapidjson.null
+  if rapidjson and type(rapidjson.encode) == 'function' and rapidjson.null ~= nil then
+    local ok, encoded = pcall(rapidjson.encode, rapidjson.null)
+    if ok and encoded == 'null' then
+      return rapidjson.null
+    end
   end
-  error('generate_case requires rapidjson.null', 0)
+
+  error('rapidjson.null is required', 0)
 end
 
 local function empty_json_array()
