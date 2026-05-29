@@ -37,7 +37,7 @@ function M.parse_config(env)
     workers = tonumber_or(env.WORKERS, DEFAULTS.workers),
     worker_id = tonumber_or(env.WORKER_ID, DEFAULTS.worker_id),
     seed = normalize_seed(env.SEED),
-    sort_keys = env.SORT_KEYS ~= '0',
+    sort_keys = env.SORT_KEYS ~= '0' and env.SORT_KEYS ~= 0,
   }
 end
 

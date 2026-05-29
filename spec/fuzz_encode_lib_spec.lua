@@ -32,6 +32,12 @@ describe('tools.fuzz_encode_lib', function()
       assert.are.equal(99, cfg.seed)
       assert.are.equal(false, cfg.sort_keys)
     end)
+
+    it('treats numeric zero as disabling sorted keys', function()
+      local cfg = fuzz.parse_config({ SORT_KEYS = 0 })
+
+      assert.are.equal(false, cfg.sort_keys)
+    end)
   end)
 
   describe('new_rng', function()
