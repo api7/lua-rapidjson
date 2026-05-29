@@ -260,6 +260,34 @@ describe('tools.fuzz_encode_lib', function()
       assert.is_nil(err)
     end)
 
+    it('accepts small floating point round-trip differences', function()
+      local case = {
+        id = 3,
+        kind = 'manual',
+        schema = 'manual',
+        value = { n = 12.931 },
+        expected = {
+          top_level_kind = 'object',
+          objects = {
+            { path = '$', key_count = 1, keys = { 'n' } },
+          },
+          arrays = {},
+          scalars = {
+            { path = '$.n', kind = 'float', value = 12.931 },
+          },
+        },
+      }
+
+      local ok, err = fuzz.validate_encoded_case(
+        rapidjson,
+        case,
+        '{"n":12.931000000000001}'
+      )
+
+      assert.is_true(ok)
+      assert.is_nil(err)
+    end)
+
     it('returns decode diagnostics when JSON cannot be decoded', function()
       local ok, err = fuzz.validate_encoded_case(rapidjson, { expected = {} }, '{"a":}')
 

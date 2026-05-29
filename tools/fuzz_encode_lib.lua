@@ -948,6 +948,13 @@ function M.format_failure(details)
   return table.concat(lines, '\n')
 end
 
+local function numbers_equal(expected, actual)
+  local delta = math.abs(expected - actual)
+  local scale = math.max(1, math.abs(expected), math.abs(actual))
+
+  return delta <= scale * 1e-12
+end
+
 function M.validate_encoded_case(rapidjson, case, json)
   local ok, decoded, decode_err = pcall(rapidjson.decode, json)
   if not ok then
@@ -1051,6 +1058,15 @@ function M.validate_encoded_case(rapidjson, case, json)
     if entry.kind == 'null' then
       if value ~= json_null(rapidjson) then
         return false, 'scalar value mismatch at ' .. entry.path .. ': expected null'
+      end
+    elseif entry.kind == 'float' then
+      if not numbers_equal(entry.value, value) then
+        return false, string.format(
+          'scalar value mismatch at %s: expected %s got %s',
+          entry.path,
+          dump_value_inner(entry.value, rapidjson, 1, {}),
+          dump_value_inner(value, rapidjson, 1, {})
+        )
       end
     elseif value ~= entry.value then
       return false, string.format(
