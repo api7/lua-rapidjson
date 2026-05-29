@@ -368,6 +368,386 @@ local function scalar_metadata(value, rapidjson)
   return type(value)
 end
 
+local function table_key_count(value)
+  local count = 0
+
+  for _ in pairs(value) do
+    count = count + 1
+  end
+
+  return count
+end
+
+local function decoded_kind(value, rapidjson)
+  if type(value) == 'table' and not is_json_null(value, rapidjson) then
+    if is_json_array(value) then
+      return 'array'
+    end
+
+    return 'object'
+  end
+
+  return scalar_metadata(value, rapidjson)
+end
+
+local function matches_expected_kind(value, expected_kind, rapidjson, expected_length)
+  if expected_kind == 'object' then
+    return type(value) == 'table' and not is_json_null(value, rapidjson) and not is_json_array(value)
+  end
+
+  if expected_kind == 'array' then
+    if type(value) ~= 'table' or is_json_null(value, rapidjson) then
+      return false
+    end
+
+    return is_json_array(value) or (expected_length == 0 and table_key_count(value) == 0)
+  end
+
+  return scalar_metadata(value, rapidjson) == expected_kind
+end
+
+local function lookup_path(value, path)
+  if path == '$' then
+    return true, value
+  end
+
+  if type(path) ~= 'string' or path:sub(1, 1) ~= '$' then
+    return false, nil, 'invalid path: ' .. tostring(path)
+  end
+
+  local current = value
+  local offset = 2
+
+  while offset <= #path do
+    local char = path:sub(offset, offset)
+
+    if char == '.' then
+      offset = offset + 1
+
+      local start = offset
+      while offset <= #path do
+        local next_char = path:sub(offset, offset)
+        if next_char == '.' or next_char == '[' then
+          break
+        end
+        offset = offset + 1
+      end
+
+      if start == offset then
+        return false, nil, 'invalid path segment: ' .. path
+      end
+
+      if type(current) ~= 'table' then
+        return false, nil, 'path not found: ' .. path
+      end
+
+      current = current[path:sub(start, offset - 1)]
+      if current == nil then
+        return false, nil, 'path not found: ' .. path
+      end
+    elseif char == '[' then
+      local close = path:find(']', offset + 1, true)
+      if close == nil then
+        return false, nil, 'invalid path segment: ' .. path
+      end
+
+      local index = tonumber(path:sub(offset + 1, close - 1))
+      if index == nil or index < 1 or index % 1 ~= 0 then
+        return false, nil, 'invalid array index: ' .. path
+      end
+
+      if type(current) ~= 'table' then
+        return false, nil, 'path not found: ' .. path
+      end
+
+      current = current[index]
+      if current == nil then
+        return false, nil, 'path not found: ' .. path
+      end
+
+      offset = close + 1
+    else
+      return false, nil, 'invalid path segment: ' .. path
+    end
+  end
+
+  return true, current
+end
+
+local function format_keys(keys)
+  return table.concat(keys, ',')
+end
+
+local function find_key_token(json, key, start, rapidjson)
+  local token = rapidjson.encode(key)
+  local offset = start
+
+  while true do
+    local first, last = json:find(token, offset, true)
+    if first == nil then
+      return nil
+    end
+
+    if json:sub(last + 1):match('^%s*:') then
+      return first
+    end
+
+    offset = last + 1
+  end
+end
+
+local function validate_key_order(rapidjson, json, object_entry)
+  local offset = 1
+  local previous_key
+
+  for _, key in ipairs(object_entry.keys or {}) do
+    local position = find_key_token(json, key, offset, rapidjson)
+    if position == nil then
+      if previous_key == nil then
+        return false, string.format(
+          'key order mismatch at %s: missing key %s',
+          object_entry.path,
+          key
+        )
+      end
+
+      return false, string.format(
+        'key order mismatch at %s: expected key %s after %s',
+        object_entry.path,
+        key,
+        previous_key
+      )
+    end
+
+    previous_key = key
+    offset = position + 1
+  end
+
+  return true
+end
+
+local function loaded_null(value, rapidjson)
+  if rapidjson and rapidjson.null ~= nil and value == rapidjson.null then
+    return true
+  end
+
+  local loaded = package.loaded.rapidjson
+  return loaded ~= nil and loaded.null ~= nil and value == loaded.null
+end
+
+local function dump_string(value)
+  local truncated = value
+  if #truncated > 120 then
+    truncated = truncated:sub(1, 117) .. '...'
+  end
+
+  return string.format('%q', truncated)
+end
+
+local function dump_value_inner(value, rapidjson, depth, seen)
+  if loaded_null(value, rapidjson) then
+    return 'null'
+  end
+
+  local value_type = type(value)
+  if value_type == 'string' then
+    return dump_string(value)
+  end
+  if value_type == 'number' or value_type == 'boolean' or value_type == 'nil' then
+    return tostring(value)
+  end
+  if value_type ~= 'table' then
+    return '<' .. value_type .. ':' .. tostring(value) .. '>'
+  end
+
+  if seen[value] then
+    return '<cycle>'
+  end
+  if depth >= 5 then
+    return is_json_array(value) and '[...]' or '{...}'
+  end
+
+  seen[value] = true
+
+  local parts = {}
+  if is_json_array(value) then
+    local limit = math.min(#value, 12)
+    for index = 1, limit do
+      parts[#parts + 1] = dump_value_inner(value[index], rapidjson, depth + 1, seen)
+    end
+    if #value > limit then
+      parts[#parts + 1] = '...'
+    end
+    seen[value] = nil
+    return '[' .. table.concat(parts, ',') .. ']'
+  end
+
+  local keys = string_keys(value)
+  local limit = math.min(#keys, 12)
+  for index = 1, limit do
+    local key = keys[index]
+    parts[#parts + 1] =
+      dump_string(key) .. '=' .. dump_value_inner(value[key], rapidjson, depth + 1, seen)
+  end
+  if #keys > limit then
+    parts[#parts + 1] = '...'
+  end
+
+  seen[value] = nil
+  return '{' .. table.concat(parts, ',') .. '}'
+end
+
+function M.dump_value(value)
+  return dump_value_inner(value, nil, 1, {})
+end
+
+function M.format_failure(details)
+  details = details or {}
+
+  local case = details.case or {}
+  local case_id = details.case_id or case.id or '?'
+  local kind = details.kind or case.kind or '?'
+  local schema = details.schema or case.schema or '?'
+  local value = details.value
+  if value == nil then
+    value = case.value
+  end
+
+  local lines = {
+    'FUZZ FAILURE',
+    'seed=' .. tostring(details.seed or '?'),
+    'worker=' .. tostring(details.worker or details.worker_id or '?'),
+    'case=' .. tostring(case_id),
+    'kind=' .. tostring(kind),
+    'schema=' .. tostring(schema),
+    'reason=' .. tostring(details.reason or '?'),
+    'value=' .. M.dump_value(value),
+  }
+
+  if details.json ~= nil then
+    lines[#lines + 1] = 'json=' .. tostring(details.json)
+  end
+
+  return table.concat(lines, '\n')
+end
+
+function M.validate_encoded_case(rapidjson, case, json)
+  local ok, decoded, decode_err = pcall(rapidjson.decode, json)
+  if not ok then
+    return false, 'decode failed: ' .. tostring(decoded)
+  end
+  if decoded == nil then
+    return false, 'decode failed: ' .. tostring(decode_err or 'nil result')
+  end
+
+  local expected = case.expected or {}
+  if expected.top_level_kind ~= nil and
+    not matches_expected_kind(decoded, expected.top_level_kind, rapidjson) then
+    return false, string.format(
+      'top-level kind mismatch: expected %s got %s',
+      expected.top_level_kind,
+      decoded_kind(decoded, rapidjson)
+    )
+  end
+
+  for _, entry in ipairs(expected.objects or {}) do
+    local found, value, err = lookup_path(decoded, entry.path)
+    if not found then
+      return false, err
+    end
+
+    if not matches_expected_kind(value, 'object', rapidjson) then
+      return false, string.format(
+        'object kind mismatch at %s: got %s',
+        entry.path,
+        decoded_kind(value, rapidjson)
+      )
+    end
+
+    local actual_keys = string_keys(value)
+    if #actual_keys ~= entry.key_count then
+      return false, string.format(
+        'object key count mismatch at %s: expected %d got %d',
+        entry.path,
+        entry.key_count,
+        #actual_keys
+      )
+    end
+
+    for index, key in ipairs(entry.keys or {}) do
+      if actual_keys[index] ~= key then
+        return false, string.format(
+          'object keys mismatch at %s: expected %s got %s',
+          entry.path,
+          format_keys(entry.keys or {}),
+          format_keys(actual_keys)
+        )
+      end
+    end
+
+    local ordered, order_err = validate_key_order(rapidjson, json, entry)
+    if not ordered then
+      return false, order_err
+    end
+  end
+
+  for _, entry in ipairs(expected.arrays or {}) do
+    local found, value, err = lookup_path(decoded, entry.path)
+    if not found then
+      return false, err
+    end
+
+    if not matches_expected_kind(value, 'array', rapidjson, entry.length) then
+      return false, string.format(
+        'array kind mismatch at %s: got %s',
+        entry.path,
+        decoded_kind(value, rapidjson)
+      )
+    end
+
+    if #value ~= entry.length then
+      return false, string.format(
+        'array length mismatch at %s: expected %d got %d',
+        entry.path,
+        entry.length,
+        #value
+      )
+    end
+  end
+
+  for _, entry in ipairs(expected.scalars or {}) do
+    local found, value, err = lookup_path(decoded, entry.path)
+    if not found then
+      return false, err
+    end
+
+    local actual_kind = scalar_metadata(value, rapidjson)
+    if actual_kind ~= entry.kind then
+      return false, string.format(
+        'scalar kind mismatch at %s: expected %s got %s',
+        entry.path,
+        entry.kind,
+        actual_kind
+      )
+    end
+
+    if entry.kind == 'null' then
+      if value ~= json_null(rapidjson) then
+        return false, 'scalar value mismatch at ' .. entry.path .. ': expected null'
+      end
+    elseif value ~= entry.value then
+      return false, string.format(
+        'scalar value mismatch at %s: expected %s got %s',
+        entry.path,
+        dump_value_inner(entry.value, rapidjson, 1, {}),
+        dump_value_inner(value, rapidjson, 1, {})
+      )
+    end
+  end
+
+  return true, nil
+end
+
 local function track_object(expected, path, value)
   local keys = string_keys(value)
 

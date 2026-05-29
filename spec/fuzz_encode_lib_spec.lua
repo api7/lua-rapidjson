@@ -174,4 +174,92 @@ describe('tools.fuzz_encode_lib', function()
       assert.is_true(seen.metadata_config)
     end)
   end)
+
+  describe('validate_encoded_case', function()
+    it('accepts a generated case encoded with sorted keys', function()
+      local case = fuzz.generate_case(fuzz.new_rng(77), 1, rapidjson)
+      local json = rapidjson.encode(case.value, { sort_keys = true })
+
+      local ok, err = fuzz.validate_encoded_case(rapidjson, case, json)
+
+      assert.is_true(ok)
+      assert.is_nil(err)
+    end)
+
+    it('rejects unsorted encoded object keys for tracked objects', function()
+      local case = {
+        id = 1,
+        kind = 'manual',
+        schema = 'manual',
+        value = { b = 1, a = 2 },
+        expected = {
+          top_level_kind = 'object',
+          objects = {
+            { path = '$', key_count = 2, keys = { 'a', 'b' } },
+          },
+          arrays = {},
+          scalars = {},
+        },
+      }
+
+      local ok, err = fuzz.validate_encoded_case(rapidjson, case, '{"b":1,"a":2}')
+
+      assert.is_false(ok)
+      assert.matches('key order', err, 1, true)
+    end)
+
+    it('validates recursive_random core metadata after encode and decode', function()
+      local case = fuzz.generate_case(fuzz.new_rng(98765), 2, rapidjson)
+      local json = rapidjson.encode(case.value, { sort_keys = true })
+
+      assert.are.equal('recursive_random', case.kind)
+      assert.are.equal('recursive_random', case.schema)
+      assert.are.equal('table', type(case.expected.random))
+
+      local ok, err = fuzz.validate_encoded_case(rapidjson, case, json)
+
+      assert.is_true(ok)
+      assert.is_nil(err)
+    end)
+
+    it('returns decode diagnostics when JSON cannot be decoded', function()
+      local ok, err = fuzz.validate_encoded_case(rapidjson, { expected = {} }, '{"a":}')
+
+      assert.is_false(ok)
+      assert.matches('decode failed:', err, 1, true)
+    end)
+  end)
+
+  describe('format_failure', function()
+    it('is reproducible and includes fuzz failure diagnostics', function()
+      local case = {
+        id = 42,
+        kind = 'manual',
+        schema = 'manual_schema',
+        value = { b = 1, a = { true, rapidjson.null } },
+      }
+      local details = {
+        seed = 12345,
+        worker_id = 2,
+        case = case,
+        reason = 'key order mismatch at $',
+        json = '{"b":1,"a":[true,null]}',
+      }
+
+      local first = fuzz.format_failure(details)
+      local second = fuzz.format_failure(details)
+
+      assert.are.equal(first, second)
+      assert.matches('FUZZ FAILURE', first, 1, true)
+      assert.matches('seed=12345', first, 1, true)
+      assert.matches('worker=2', first, 1, true)
+      assert.matches('case=42', first, 1, true)
+      assert.matches('kind=manual', first, 1, true)
+      assert.matches('schema=manual_schema', first, 1, true)
+      assert.matches('reason=key order mismatch at $', first, 1, true)
+      assert.matches('value=', first, 1, true)
+      assert.matches('"a"', first, 1, true)
+      assert.matches('json={"b":1,"a":[true,null]}', first, 1, true)
+    end)
+  end)
 end)
