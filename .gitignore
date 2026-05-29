@@ -26,3 +26,4 @@ rapidjson/rapidjson.autopkg
 rapidjson/travis-doxygen.sh
 /cmake-build-debug
 /.idea
+/docs/superpowers/
