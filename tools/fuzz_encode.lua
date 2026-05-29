@@ -24,6 +24,8 @@ local stats = {
   seed = cfg.seed,
   last_case_id = 0,
 }
+local last_report_total = -1
+local last_report_elapsed = -1
 
 local function update_stats(now)
   stats.elapsed = now - started
@@ -32,6 +34,12 @@ local function update_stats(now)
   else
     stats.rate = stats.total / stats.elapsed
   end
+end
+
+local function print_summary()
+  print(fuzz.format_summary(stats))
+  last_report_total = stats.total
+  last_report_elapsed = stats.elapsed
 end
 
 while os.time() < deadline do
@@ -61,15 +69,25 @@ while os.time() < deadline do
     end
   else
     stats.encode_errors = stats.encode_errors + 1
+    update_stats(os.time())
+    io.stderr:write(fuzz.format_failure({
+      seed = cfg.seed,
+      worker_id = cfg.worker_id,
+      case = generated_case,
+      reason = 'encode failed: ' .. tostring(json_or_err),
+    }), '\n')
+    os.exit(1)
   end
 
   local now = os.time()
   if now >= next_report then
     update_stats(now)
-    print(fuzz.format_summary(stats))
+    print_summary()
     next_report = now + cfg.interval
   end
 end
 
 update_stats(os.time())
-print(fuzz.format_summary(stats))
+if stats.total ~= last_report_total or stats.elapsed ~= last_report_elapsed then
+  print_summary()
+end
