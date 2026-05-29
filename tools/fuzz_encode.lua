@@ -2,7 +2,16 @@ local rapidjson = require('rapidjson')
 local fuzz = require('tools.fuzz_encode_lib')
 
 local env = fuzz.env_from_args(arg)
-for _, key in ipairs({ 'DURATION', 'INTERVAL', 'WORKERS', 'WORKER_ID', 'SEED', 'SORT_KEYS' }) do
+for _, key in ipairs({
+  'DURATION',
+  'INTERVAL',
+  'WORKERS',
+  'WORKER_ID',
+  'SEED',
+  'SORT_KEYS',
+  'SAMPLE_INTERVAL',
+  'SAMPLE_LIMIT',
+}) do
   if env[key] == nil then
     env[key] = os.getenv(key)
   end
@@ -26,6 +35,8 @@ local stats = {
 }
 local last_report_total = -1
 local last_report_elapsed = -1
+local sample_count = 0
+local next_sample_at = started
 
 local function update_stats(now)
   stats.elapsed = now - started
@@ -40,6 +51,45 @@ local function print_summary()
   print(fuzz.format_summary(stats))
   last_report_total = stats.total
   last_report_elapsed = stats.elapsed
+end
+
+local function sample_limit_reached()
+  return cfg.sample_limit > 0 and sample_count >= cfg.sample_limit
+end
+
+local function advance_next_sample_at(now)
+  repeat
+    next_sample_at = next_sample_at + cfg.sample_interval
+  until next_sample_at > now
+end
+
+local function maybe_print_sample(generated_case, encoded_json, now)
+  if cfg.sample_interval <= 0 or sample_limit_reached() or now < next_sample_at then
+    return
+  end
+
+  local raw_ok, raw_json_or_err = pcall(rapidjson.encode, generated_case.value, {
+    sort_keys = false,
+  })
+  local sorted_ok, sorted_json_or_err = true, encoded_json
+  if not cfg.sort_keys then
+    sorted_ok, sorted_json_or_err = pcall(rapidjson.encode, generated_case.value, {
+      sort_keys = true,
+    })
+  end
+
+  sample_count = sample_count + 1
+  update_stats(now)
+  print(fuzz.format_sample({
+    rapidjson = rapidjson,
+    seed = cfg.seed,
+    worker_id = cfg.worker_id,
+    elapsed = stats.elapsed,
+    case = generated_case,
+    raw_json_unsorted = raw_ok and raw_json_or_err or ('<encode failed: ' .. tostring(raw_json_or_err) .. '>'),
+    encoded_json_sort_keys = sorted_ok and sorted_json_or_err or ('<encode failed: ' .. tostring(sorted_json_or_err) .. '>'),
+  }))
+  advance_next_sample_at(now)
 end
 
 while os.time() < deadline do
@@ -80,6 +130,10 @@ while os.time() < deadline do
   end
 
   local now = os.time()
+  if ok then
+    maybe_print_sample(generated_case, json_or_err, now)
+  end
+
   if now >= next_report then
     update_stats(now)
     print_summary()

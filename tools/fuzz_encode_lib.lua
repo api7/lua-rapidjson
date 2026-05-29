@@ -6,6 +6,8 @@ local DEFAULTS = {
   workers = 1,
   worker_id = 1,
   sort_keys = true,
+  sample_interval = 0,
+  sample_limit = 0,
 }
 
 local function tonumber_or(value, default)
@@ -31,6 +33,12 @@ end
 
 function M.parse_config(env)
   env = env or {}
+  local sample_interval = tonumber_or(env.SAMPLE_INTERVAL, DEFAULTS.sample_interval)
+  local sample_limit = tonumber(env.SAMPLE_LIMIT)
+  if sample_limit == nil then
+    sample_limit = sample_interval > 0 and 10 or DEFAULTS.sample_limit
+  end
+
   return {
     duration = tonumber_or(env.DURATION, DEFAULTS.duration),
     interval = tonumber_or(env.INTERVAL, DEFAULTS.interval),
@@ -38,6 +46,8 @@ function M.parse_config(env)
     worker_id = tonumber_or(env.WORKER_ID, DEFAULTS.worker_id),
     seed = normalize_seed(env.SEED),
     sort_keys = env.SORT_KEYS ~= '0' and env.SORT_KEYS ~= 0,
+    sample_interval = sample_interval,
+    sample_limit = sample_limit,
   }
 end
 
@@ -916,6 +926,93 @@ end
 
 function M.dump_value(value)
   return dump_value_inner(value, nil, 1, {})
+end
+
+local function dump_full_string(value)
+  return string.format('%q', value)
+end
+
+local dump_full_value_inner
+
+local function dump_full_table(value, rapidjson, seen)
+  if seen[value] then
+    return '<cycle>'
+  end
+
+  seen[value] = true
+
+  local parts = {}
+  if is_json_array(value) then
+    for index = 1, #value do
+      parts[#parts + 1] = dump_full_value_inner(value[index], rapidjson, seen)
+    end
+
+    seen[value] = nil
+    return '[' .. table.concat(parts, ',') .. ']'
+  end
+
+  local keys = string_keys(value)
+  for _, key in ipairs(keys) do
+    parts[#parts + 1] =
+      dump_full_string(key) .. '=' .. dump_full_value_inner(value[key], rapidjson, seen)
+  end
+
+  seen[value] = nil
+  return '{' .. table.concat(parts, ',') .. '}'
+end
+
+function dump_full_value_inner(value, rapidjson, seen)
+  if loaded_null(value, rapidjson) then
+    return 'null'
+  end
+
+  local value_type = type(value)
+  if value_type == 'string' then
+    return dump_full_string(value)
+  end
+  if value_type == 'number' or value_type == 'boolean' or value_type == 'nil' then
+    return tostring(value)
+  end
+  if value_type ~= 'table' then
+    return '<' .. value_type .. ':' .. tostring(value) .. '>'
+  end
+
+  return dump_full_table(value, rapidjson, seen)
+end
+
+function M.dump_full_value(value, rapidjson)
+  return dump_full_value_inner(value, rapidjson, {})
+end
+
+local SAMPLE_LABEL_WIDTH = #'encoded_json_sort_keys='
+
+local function format_sample_value(label, value)
+  return label .. string.rep(' ', SAMPLE_LABEL_WIDTH - #label) .. tostring(value or '')
+end
+
+function M.format_sample(details)
+  details = details or {}
+
+  local case = details.case or {}
+  local value = details.value
+  if value == nil then
+    value = case.value
+  end
+
+  local lines = {
+    'FUZZ SAMPLE',
+    'seed=' .. tostring(details.seed or '?'),
+    'worker=' .. tostring(details.worker or details.worker_id or '?'),
+    'elapsed=' .. tostring(details.elapsed or '?') .. 's',
+    'case=' .. tostring(details.case_id or case.id or '?'),
+    'kind=' .. tostring(details.kind or case.kind or '?'),
+    'schema=' .. tostring(details.schema or case.schema or '?'),
+    format_sample_value('input_lua=', M.dump_full_value(value, details.rapidjson)),
+    format_sample_value('raw_json_unsorted=', details.raw_json_unsorted),
+    format_sample_value('encoded_json_sort_keys=', details.encoded_json_sort_keys),
+  }
+
+  return table.concat(lines, '\n')
 end
 
 function M.format_failure(details)

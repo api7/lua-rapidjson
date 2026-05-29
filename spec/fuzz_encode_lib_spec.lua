@@ -13,6 +13,8 @@ describe('tools.fuzz_encode_lib', function()
       assert.are.equal(1, cfg.workers)
       assert.are.equal(1, cfg.worker_id)
       assert.are.equal(true, cfg.sort_keys)
+      assert.are.equal(0, cfg.sample_interval)
+      assert.are.equal(0, cfg.sample_limit)
       assert.are.equal('number', type(cfg.seed))
     end)
 
@@ -24,6 +26,8 @@ describe('tools.fuzz_encode_lib', function()
         WORKER_ID = '2',
         SEED = '99',
         SORT_KEYS = '0',
+        SAMPLE_INTERVAL = '3',
+        SAMPLE_LIMIT = '10',
       })
 
       assert.are.equal(12, cfg.duration)
@@ -32,6 +36,15 @@ describe('tools.fuzz_encode_lib', function()
       assert.are.equal(2, cfg.worker_id)
       assert.are.equal(99, cfg.seed)
       assert.are.equal(false, cfg.sort_keys)
+      assert.are.equal(3, cfg.sample_interval)
+      assert.are.equal(10, cfg.sample_limit)
+    end)
+
+    it('defaults time-based sampling to 10 samples when enabled', function()
+      local cfg = fuzz.parse_config({ SAMPLE_INTERVAL = '1' })
+
+      assert.are.equal(1, cfg.sample_interval)
+      assert.are.equal(10, cfg.sample_limit)
     end)
 
     it('treats numeric zero as disabling sorted keys', function()
@@ -326,6 +339,43 @@ describe('tools.fuzz_encode_lib', function()
       assert.matches('value=', first, 1, true)
       assert.matches('"a"', first, 1, true)
       assert.matches('json={"b":1,"a":[true,null]}', first, 1, true)
+    end)
+  end)
+
+  describe('format_sample', function()
+    it('prints full sample data with aligned value columns', function()
+      local case = {
+        id = 7,
+        kind = 'manual',
+        schema = 'manual_schema',
+        value = {
+          root = {
+            child = {
+              leaf = {
+                value = 'deep-value',
+              },
+            },
+          },
+        },
+      }
+
+      local sample = fuzz.format_sample({
+        seed = 123,
+        worker_id = 1,
+        elapsed = 2,
+        case = case,
+        raw_json_unsorted = '{"root":{"child":{"leaf":{"value":"deep-value"}}}}',
+        encoded_json_sort_keys = '{"root":{"child":{"leaf":{"value":"deep-value"}}}}',
+      })
+
+      assert.matches('FUZZ SAMPLE', sample, 1, true)
+      assert.matches('case=7', sample, 1, true)
+      assert.matches('input_lua=             {', sample, 1, true)
+      assert.matches('raw_json_unsorted=     {', sample, 1, true)
+      assert.matches('encoded_json_sort_keys={', sample, 1, true)
+      assert.matches('deep-value', sample, 1, true)
+      assert.is_nil(sample:find('{...}', 1, true))
+      assert.is_nil(sample:find('[...]', 1, true))
     end)
   end)
 end)

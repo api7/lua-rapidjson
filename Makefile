@@ -6,6 +6,8 @@ INTERVAL ?= 5
 WORKERS ?= 1
 SEED ?= $(shell date +%s)
 SORT_KEYS ?= 1
+SAMPLE_INTERVAL ?= 0
+SAMPLE_LIMIT ?=
 
 fuzz:
 	@set -u; \
@@ -25,6 +27,8 @@ fuzz:
 			WORKER_ID="$$worker" \
 			SEED="$$seed" \
 			SORT_KEYS="$(SORT_KEYS)" \
+			SAMPLE_INTERVAL="$(SAMPLE_INTERVAL)" \
+			SAMPLE_LIMIT="$(SAMPLE_LIMIT)" \
 			"$(LUA)" tools/fuzz_encode.lua; \
 			rc=$$?; \
 			if [ "$$rc" -ne 0 ]; then \
