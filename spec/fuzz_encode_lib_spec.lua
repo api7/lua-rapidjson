@@ -208,6 +208,28 @@ describe('tools.fuzz_encode_lib', function()
       assert.matches('key order', err, 1, true)
     end)
 
+    it('rejects unsorted nested object keys for tracked object paths', function()
+      local case = {
+        id = 2,
+        kind = 'manual',
+        schema = 'manual',
+        value = { a = { b = 1, a = 2 } },
+        expected = {
+          top_level_kind = 'object',
+          objects = {
+            { path = '$.a', key_count = 2, keys = { 'a', 'b' } },
+          },
+          arrays = {},
+          scalars = {},
+        },
+      }
+
+      local ok, err = fuzz.validate_encoded_case(rapidjson, case, '{"a":{"b":1,"a":2}}')
+
+      assert.is_false(ok)
+      assert.matches('key order', err, 1, true)
+    end)
+
     it('validates recursive_random core metadata after encode and decode', function()
       local case = fuzz.generate_case(fuzz.new_rng(98765), 2, rapidjson)
       local json = rapidjson.encode(case.value, { sort_keys = true })

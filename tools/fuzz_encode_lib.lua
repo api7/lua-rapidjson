@@ -478,49 +478,366 @@ local function format_keys(keys)
   return table.concat(keys, ',')
 end
 
-local function find_key_token(json, key, start, rapidjson)
-  local token = rapidjson.encode(key)
-  local offset = start
-
-  while true do
-    local first, last = json:find(token, offset, true)
-    if first == nil then
-      return nil
+local function skip_json_ws(json, offset)
+  while offset <= #json do
+    local char = json:sub(offset, offset)
+    if char ~= ' ' and char ~= '\n' and char ~= '\r' and char ~= '\t' then
+      break
     end
 
-    if json:sub(last + 1):match('^%s*:') then
-      return first
-    end
-
-    offset = last + 1
+    offset = offset + 1
   end
+
+  return offset
+end
+
+local function scan_json_string(json, offset)
+  if json:sub(offset, offset) ~= '"' then
+    return nil, 'expected string at byte ' .. tostring(offset)
+  end
+
+  offset = offset + 1
+  while offset <= #json do
+    local char = json:sub(offset, offset)
+    if char == '"' then
+      return offset
+    end
+    if char == '\\' then
+      offset = offset + 2
+    else
+      offset = offset + 1
+    end
+  end
+
+  return nil, 'unterminated string'
+end
+
+local skip_json_value
+
+local function skip_json_object(json, offset)
+  offset = skip_json_ws(json, offset + 1)
+  if json:sub(offset, offset) == '}' then
+    return offset + 1
+  end
+
+  while offset <= #json do
+    local string_end, err = scan_json_string(json, offset)
+    if string_end == nil then
+      return nil, err
+    end
+
+    offset = skip_json_ws(json, string_end + 1)
+    if json:sub(offset, offset) ~= ':' then
+      return nil, 'expected object member colon'
+    end
+
+    offset = skip_json_value(json, offset + 1)
+    if offset == nil then
+      return nil, 'invalid object member value'
+    end
+
+    offset = skip_json_ws(json, offset)
+    local char = json:sub(offset, offset)
+    if char == '}' then
+      return offset + 1
+    end
+    if char ~= ',' then
+      return nil, 'expected object member separator'
+    end
+
+    offset = skip_json_ws(json, offset + 1)
+  end
+
+  return nil, 'unterminated object'
+end
+
+local function skip_json_array(json, offset)
+  offset = skip_json_ws(json, offset + 1)
+  if json:sub(offset, offset) == ']' then
+    return offset + 1
+  end
+
+  while offset <= #json do
+    offset = skip_json_value(json, offset)
+    if offset == nil then
+      return nil, 'invalid array value'
+    end
+
+    offset = skip_json_ws(json, offset)
+    local char = json:sub(offset, offset)
+    if char == ']' then
+      return offset + 1
+    end
+    if char ~= ',' then
+      return nil, 'expected array separator'
+    end
+
+    offset = skip_json_ws(json, offset + 1)
+  end
+
+  return nil, 'unterminated array'
+end
+
+skip_json_value = function(json, offset)
+  offset = skip_json_ws(json, offset)
+
+  local char = json:sub(offset, offset)
+  if char == '"' then
+    local string_end, err = scan_json_string(json, offset)
+    if string_end == nil then
+      return nil, err
+    end
+
+    return string_end + 1
+  end
+  if char == '{' then
+    return skip_json_object(json, offset)
+  end
+  if char == '[' then
+    return skip_json_array(json, offset)
+  end
+
+  while offset <= #json do
+    char = json:sub(offset, offset)
+    if char == ',' or char == '}' or char == ']' or char:match('%s') then
+      break
+    end
+
+    offset = offset + 1
+  end
+
+  return offset
+end
+
+local function json_object_members(json, object_start)
+  if json:sub(object_start, object_start) ~= '{' then
+    return nil, 'expected object at byte ' .. tostring(object_start)
+  end
+
+  local members = {}
+  local offset = skip_json_ws(json, object_start + 1)
+  if json:sub(offset, offset) == '}' then
+    return members, offset
+  end
+
+  while offset <= #json do
+    local key_start = offset
+    local key_end, err = scan_json_string(json, key_start)
+    if key_end == nil then
+      return nil, err
+    end
+
+    offset = skip_json_ws(json, key_end + 1)
+    if json:sub(offset, offset) ~= ':' then
+      return nil, 'expected object member colon'
+    end
+
+    local value_start = skip_json_ws(json, offset + 1)
+    members[#members + 1] = {
+      token = json:sub(key_start, key_end),
+      value_start = value_start,
+    }
+
+    offset = skip_json_value(json, value_start)
+    if offset == nil then
+      return nil, 'invalid object member value'
+    end
+
+    offset = skip_json_ws(json, offset)
+    local char = json:sub(offset, offset)
+    if char == '}' then
+      return members, offset
+    end
+    if char ~= ',' then
+      return nil, 'expected object member separator'
+    end
+
+    offset = skip_json_ws(json, offset + 1)
+  end
+
+  return nil, 'unterminated object'
+end
+
+local function tokenize_path(path)
+  local steps = {}
+
+  if path == '$' then
+    return true, steps
+  end
+  if type(path) ~= 'string' or path:sub(1, 1) ~= '$' then
+    return false, 'invalid path: ' .. tostring(path)
+  end
+
+  local offset = 2
+  while offset <= #path do
+    local char = path:sub(offset, offset)
+
+    if char == '.' then
+      offset = offset + 1
+
+      local start = offset
+      while offset <= #path do
+        local next_char = path:sub(offset, offset)
+        if next_char == '.' or next_char == '[' then
+          break
+        end
+        offset = offset + 1
+      end
+
+      if start == offset then
+        return false, 'invalid path segment: ' .. path
+      end
+
+      steps[#steps + 1] = {
+        kind = 'field',
+        key = path:sub(start, offset - 1),
+      }
+    elseif char == '[' then
+      local close = path:find(']', offset + 1, true)
+      if close == nil then
+        return false, 'invalid path segment: ' .. path
+      end
+
+      local index = tonumber(path:sub(offset + 1, close - 1))
+      if index == nil or index < 1 or index % 1 ~= 0 then
+        return false, 'invalid array index: ' .. path
+      end
+
+      steps[#steps + 1] = {
+        kind = 'index',
+        index = index,
+      }
+      offset = close + 1
+    else
+      return false, 'invalid path segment: ' .. path
+    end
+  end
+
+  return true, steps
+end
+
+local function json_object_member_value_start(rapidjson, json, object_start, key)
+  local members, err = json_object_members(json, object_start)
+  if members == nil then
+    return nil, err
+  end
+
+  local token = rapidjson.encode(key)
+  for _, member in ipairs(members) do
+    if member.token == token then
+      return member.value_start
+    end
+  end
+
+  return nil, 'path not found'
+end
+
+local function json_array_value_start(json, array_start, expected_index)
+  if json:sub(array_start, array_start) ~= '[' then
+    return nil, 'expected array at byte ' .. tostring(array_start)
+  end
+
+  local offset = skip_json_ws(json, array_start + 1)
+  if json:sub(offset, offset) == ']' then
+    return nil, 'path not found'
+  end
+
+  local index = 1
+  while offset <= #json do
+    local value_start = offset
+    local next_offset = skip_json_value(json, value_start)
+    if next_offset == nil then
+      return nil, 'invalid array value'
+    end
+
+    if index == expected_index then
+      return value_start
+    end
+
+    offset = skip_json_ws(json, next_offset)
+    local char = json:sub(offset, offset)
+    if char == ']' then
+      return nil, 'path not found'
+    end
+    if char ~= ',' then
+      return nil, 'expected array separator'
+    end
+
+    index = index + 1
+    offset = skip_json_ws(json, offset + 1)
+  end
+
+  return nil, 'unterminated array'
+end
+
+local function json_value_start_for_path(rapidjson, json, path)
+  local ok, steps_or_err = tokenize_path(path)
+  if not ok then
+    return nil, steps_or_err
+  end
+
+  local offset = skip_json_ws(json, 1)
+  for _, step in ipairs(steps_or_err) do
+    if step.kind == 'field' then
+      if json:sub(offset, offset) ~= '{' then
+        return nil, 'path not found'
+      end
+
+      local value_start, err =
+        json_object_member_value_start(rapidjson, json, offset, step.key)
+      if value_start == nil then
+        return nil, err
+      end
+
+      offset = skip_json_ws(json, value_start)
+    else
+      if json:sub(offset, offset) ~= '[' then
+        return nil, 'path not found'
+      end
+
+      local value_start, err = json_array_value_start(json, offset, step.index)
+      if value_start == nil then
+        return nil, err
+      end
+
+      offset = skip_json_ws(json, value_start)
+    end
+  end
+
+  return offset
 end
 
 local function validate_key_order(rapidjson, json, object_entry)
-  local offset = 1
-  local previous_key
+  local object_start, err = json_value_start_for_path(rapidjson, json, object_entry.path)
+  if object_start == nil then
+    return false, string.format(
+      'key order path lookup failed at %s: %s',
+      object_entry.path,
+      err
+    )
+  end
 
-  for _, key in ipairs(object_entry.keys or {}) do
-    local position = find_key_token(json, key, offset, rapidjson)
-    if position == nil then
-      if previous_key == nil then
-        return false, string.format(
-          'key order mismatch at %s: missing key %s',
-          object_entry.path,
-          key
-        )
-      end
+  local members, parse_err = json_object_members(json, object_start)
+  if members == nil then
+    return false, string.format(
+      'key order object lookup failed at %s: %s',
+      object_entry.path,
+      parse_err
+    )
+  end
 
+  for index, key in ipairs(object_entry.keys or {}) do
+    local member = members[index]
+    local token = rapidjson.encode(key)
+
+    if member == nil or member.token ~= token then
       return false, string.format(
-        'key order mismatch at %s: expected key %s after %s',
+        'key order mismatch at %s: expected key %s at position %d',
         object_entry.path,
         key,
-        previous_key
+        index
       )
     end
-
-    previous_key = key
-    offset = position + 1
   end
 
   return true
