@@ -101,7 +101,6 @@ local CASE_KINDS = {
 }
 
 local EMPTY_ARRAY_MT = { __jsontype = 'array' }
-local FALLBACK_NULL = {}
 
 local KEY_PARTS = {
   'alpha',
@@ -153,7 +152,7 @@ local function json_null(rapidjson)
   if rapidjson and rapidjson.null ~= nil then
     return rapidjson.null
   end
-  return FALLBACK_NULL
+  error('generate_case requires rapidjson.null', 0)
 end
 
 local function empty_json_array()
@@ -276,20 +275,26 @@ end
 
 local function generate_random_payload(rng, rapidjson)
   local max_depth = rng:int(3, 6)
-  local payload = generate_random_object(rng, rapidjson, 1, max_depth)
+  local random_core = generate_random_object(rng, rapidjson, 1, max_depth)
 
-  payload.empty_object = {}
-  payload.empty_array = empty_json_array()
-  payload.scalar_samples = {
-    boolean = rng:bool(),
-    empty_string = '',
-    float = random_float(rng),
-    integer = random_integer(rng),
-    null_value = json_null(rapidjson),
-    string = random_string(rng),
+  random_core[unique_random_key(rng, random_core)] =
+    generate_random_array(rng, rapidjson, 2, max_depth)
+  random_core[unique_random_key(rng, random_core)] =
+    generate_random_object(rng, rapidjson, 2, max_depth)
+
+  return {
+    random = random_core,
+    empty_object = {},
+    empty_array = empty_json_array(),
+    scalar_samples = {
+      boolean = rng:bool(),
+      empty_string = '',
+      float = random_float(rng),
+      integer = random_integer(rng),
+      null_value = json_null(rapidjson),
+      string = random_string(rng),
+    },
   }
-
-  return payload
 end
 
 local function string_keys(value)
@@ -390,6 +395,8 @@ local function track_scalar(expected, path, value, rapidjson)
   expected.scalars[#expected.scalars + 1] = entry
 end
 
+-- Schema shells track selected scalars only.
+-- Recursive-core metadata is exhaustive for that generated core.
 local function base_expected(top_level_kind)
   return {
     top_level_kind = top_level_kind,
@@ -459,6 +466,30 @@ local function collect_random_metadata(expected, value, path, rapidjson)
   return stats
 end
 
+local function collect_payload_metadata(expected, payload, path, rapidjson)
+  track_object(expected, path, payload)
+  track_object(expected, path .. '.empty_object', payload.empty_object)
+  track_array(expected, path .. '.empty_array', payload.empty_array)
+  track_object(expected, path .. '.scalar_samples', payload.scalar_samples)
+  track_scalar(expected, path .. '.scalar_samples.boolean', payload.scalar_samples.boolean, rapidjson)
+  track_scalar(
+    expected,
+    path .. '.scalar_samples.empty_string',
+    payload.scalar_samples.empty_string,
+    rapidjson
+  )
+  track_scalar(expected, path .. '.scalar_samples.float', payload.scalar_samples.float, rapidjson)
+  track_scalar(expected, path .. '.scalar_samples.integer', payload.scalar_samples.integer, rapidjson)
+  track_scalar(
+    expected,
+    path .. '.scalar_samples.null_value',
+    payload.scalar_samples.null_value,
+    rapidjson
+  )
+  track_scalar(expected, path .. '.scalar_samples.string', payload.scalar_samples.string, rapidjson)
+  collect_random_metadata(expected, payload.random, path .. '.random', rapidjson)
+end
+
 local function build_llm_response(rng, rapidjson)
   local value = {
     id = 'chatcmpl-' .. tostring(rng:int(100000, 999999)),
@@ -494,7 +525,7 @@ local function build_llm_response(rng, rapidjson)
   track_scalar(expected, '$.model', value.model, rapidjson)
   track_scalar(expected, '$.choices[1].message.content', value.choices[1].message.content, rapidjson)
   track_scalar(expected, '$.usage.total_tokens', value.usage.total_tokens, rapidjson)
-  collect_random_metadata(expected, value.fuzz, '$.fuzz', rapidjson)
+  collect_payload_metadata(expected, value.fuzz, '$.fuzz', rapidjson)
 
   return value, expected
 end
@@ -542,7 +573,7 @@ local function build_github_issue(rng, rapidjson)
   track_scalar(expected, '$.title', value.title, rapidjson)
   track_scalar(expected, '$.state', value.state, rapidjson)
   track_scalar(expected, '$.locked', value.locked, rapidjson)
-  collect_random_metadata(expected, value.fuzz, '$.fuzz', rapidjson)
+  collect_payload_metadata(expected, value.fuzz, '$.fuzz', rapidjson)
 
   return value, expected
 end
@@ -591,7 +622,7 @@ local function build_social_feed(rng, rapidjson)
   track_scalar(expected, '$.feed_id', value.feed_id, rapidjson)
   track_scalar(expected, '$.posts[1].body', value.posts[1].body, rapidjson)
   track_scalar(expected, '$.viewer.premium', value.viewer.premium, rapidjson)
-  collect_random_metadata(expected, value.fuzz, '$.fuzz', rapidjson)
+  collect_payload_metadata(expected, value.fuzz, '$.fuzz', rapidjson)
 
   return value, expected
 end
@@ -642,7 +673,7 @@ local function build_paginated_list(rng, rapidjson)
   track_scalar(expected, '$.per_page', value.per_page, rapidjson)
   track_scalar(expected, '$.has_next', value.has_next, rapidjson)
   track_scalar(expected, '$.links.previous', value.links.previous, rapidjson)
-  collect_random_metadata(expected, value.fuzz, '$.fuzz', rapidjson)
+  collect_payload_metadata(expected, value.fuzz, '$.fuzz', rapidjson)
 
   return value, expected
 end
@@ -693,7 +724,7 @@ local function build_metadata_config(rng, rapidjson)
   track_scalar(expected, '$.environment', value.environment, rapidjson)
   track_scalar(expected, '$.flags.strict', value.flags.strict, rapidjson)
   track_scalar(expected, '$.limits.requests_per_minute', value.limits.requests_per_minute, rapidjson)
-  collect_random_metadata(expected, value.fuzz, '$.fuzz', rapidjson)
+  collect_payload_metadata(expected, value.fuzz, '$.fuzz', rapidjson)
 
   return value, expected
 end
@@ -709,6 +740,7 @@ local SCHEMA_BUILDERS = {
 function M.generate_case(rng, case_id, rapidjson)
   case_id = case_id or 1
   rng = rng or M.new_rng(case_id)
+  json_null(rapidjson)
 
   local kind = CASE_KINDS[((case_id - 1) % #CASE_KINDS) + 1]
 
@@ -730,7 +762,8 @@ function M.generate_case(rng, case_id, rapidjson)
   value.case_id = case_id
 
   local expected = base_expected('object')
-  collect_random_metadata(expected, value, '$', rapidjson)
+  track_scalar(expected, '$.case_id', value.case_id, rapidjson)
+  collect_payload_metadata(expected, value, '$', rapidjson)
 
   return {
     id = case_id,

@@ -2,6 +2,7 @@ require 'busted.runner'()
 
 describe('tools.fuzz_encode_lib', function()
   local fuzz = require('tools.fuzz_encode_lib')
+  local rapidjson = require('rapidjson')
 
   describe('parse_config', function()
     it('uses production defaults', function()
@@ -78,9 +79,9 @@ describe('tools.fuzz_encode_lib', function()
   end)
 
   describe('generate_case', function()
-    it('generates deterministic schema-guided cases with metadata', function()
-      local a = fuzz.generate_case(fuzz.new_rng(321), 1, { null = {} })
-      local b = fuzz.generate_case(fuzz.new_rng(321), 1, { null = {} })
+    it('generates deterministic schema-guided cases with selected metadata', function()
+      local a = fuzz.generate_case(fuzz.new_rng(321), 1, rapidjson)
+      local b = fuzz.generate_case(fuzz.new_rng(321), 1, rapidjson)
 
       assert.are.same(a.value, b.value)
       assert.are.same(a.expected, b.expected)
@@ -95,17 +96,50 @@ describe('tools.fuzz_encode_lib', function()
     end)
 
     it('adds pure recursive random cases with nested objects and arrays', function()
-      local case = fuzz.generate_case(fuzz.new_rng(98765), 3, { null = {} })
+      local case = fuzz.generate_case(fuzz.new_rng(98765), 3, rapidjson)
 
       assert.are.equal('recursive_random', case.kind)
       assert.are.equal('recursive_random', case.schema)
       assert.are.equal('table', type(case.value))
+      assert.are.equal('table', type(case.value.random))
       assert.are.equal('table', type(case.expected.random))
       assert.is_true(case.expected.random.max_depth >= 3)
       assert.is_true(case.expected.random.object_count >= 2)
       assert.is_true(case.expected.random.array_count >= 1)
       assert.is_true(#case.expected.objects >= case.expected.random.object_count)
       assert.is_true(#case.expected.arrays >= case.expected.random.array_count)
+    end)
+
+    it('tracks recursive random arrays from the generated core', function()
+      local case = fuzz.generate_case(fuzz.new_rng(98765), 3, rapidjson)
+      local saw_core_array = false
+
+      for _, entry in ipairs(case.expected.arrays) do
+        if entry.path:match('^%$%.random') then
+          saw_core_array = true
+        end
+      end
+
+      assert.is_true(saw_core_array)
+    end)
+
+    it('emits rapidjson null sentinels that round-trip as JSON null', function()
+      local case = fuzz.generate_case(fuzz.new_rng(100), 10, rapidjson)
+
+      assert.are.equal('paginated_list', case.schema)
+      assert.are.equal(rapidjson.null, case.value.links.previous)
+
+      local encoded = rapidjson.encode(case.value)
+      local decoded = rapidjson.decode(encoded)
+
+      assert.matches('"previous":null', encoded, 1, true)
+      assert.are.equal(rapidjson.null, decoded.links.previous)
+    end)
+
+    it('requires a real rapidjson null sentinel', function()
+      assert.has_error(function()
+        fuzz.generate_case(fuzz.new_rng(1), 1, {})
+      end, 'generate_case requires rapidjson.null')
     end)
 
     it('runs pure recursive random cases at least as often as schema-guided cases', function()
@@ -117,7 +151,7 @@ describe('tools.fuzz_encode_lib', function()
       }
 
       for case_id = 1, 30 do
-        local case = fuzz.generate_case(rng, case_id, { null = {} })
+        local case = fuzz.generate_case(rng, case_id, rapidjson)
         counts[case.kind] = counts[case.kind] + 1
         if case.kind == 'schema_guided' then
           seen[case.schema] = true
