@@ -7,6 +7,8 @@ CMakeFiles
 cmake_install.cmake
 json.so
 json.dll
+rapidjson.so
+rapidjson.so.dSYM/
 deps/
 /*.src.rock
 /rapidjson/test/
@@ -26,3 +28,4 @@ rapidjson/rapidjson.autopkg
 rapidjson/travis-doxygen.sh
 /cmake-build-debug
 /.idea
+/docs/superpowers/
