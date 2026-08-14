@@ -14,6 +14,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
 
     - uses: leafo/gh-actions-lua@v13
       with:
@@ -52,7 +54,7 @@ jobs:
         beyond=$(objdump -d --no-show-raw-insn "$module" \
             | grep -oE '^[[:space:]]+[0-9a-f]+:[[:space:]]+[a-z][a-z0-9]*' \
             | awk '{print $2}' | sort -u \
-            | grep -E '^(v[a-z][a-z0-9]*|k[a-z][a-z0-9]*|popcnt|lzcnt|tzcnt|crc32|movbe|adcx|adox|prefetchw|andn|bextr|bls[imr]|bzhi|mulx|pdep|pext|rorx|sarx|shlx|shrx|aes[a-z]*|pclmul[a-z]*|sha1[a-z]*|sha256[a-z]*|pcmp[ei]str[im]|pcmpgtq|ptest|pblendw|pblendvb|blendp[sd]|blendvp[sd]|dpp[sd]|pmov[sz]x[a-z]*|pmulld|pmuldq|packusdw|phminposuw|mpsadbw|movntdqa|round[sp][sd]|insertps|extractps|phadd[a-z]*|phsub[a-z]*|pmaddubsw|pmulhrsw|pabs[bwd]|palignr|pshufb|psign[bwd]|lddqu|movddup|movs[hl]dup|addsubp[sd]|haddp[sd]|hsubp[sd]|pm(in|ax)(s[bd]|u[dw]))$' || true)
+            | grep -E '^(v[a-z][a-z0-9]*|k[a-z][a-z0-9]*|popcnt|lzcnt|tzcnt|crc32|movbe|adcx|adox|prefetchw|andn|bextr|bls[imr]|bzhi|mulx|pdep|pext|rorx|sarx|shlx|shrx|aes[a-z]*|pclmul[a-z]*|sha1[a-z]*|sha256[a-z]*|pcmp[ei]str[im]|pcmpgtq|ptest|pblendw|pblendvb|blendp[sd]|blendvp[sd]|dpp[sd]|pmov[sz]x[a-z]*|pmulld|pmuldq|packusdw|phminposuw|mpsadbw|movntdqa|round[sp][sd]|insertps|extractps|phadd[a-z]*|phsub[a-z]*|pmaddubsw|pmulhrsw|pabs[bwd]|palignr|pshufb|psign[bwd]|lddqu|movddup|movs[hl]dup|addsubp[sd]|haddp[sd]|hsubp[sd]|pm(in|ax)(s[bd]|u[dw])|rdrand|rdseed|rdpid|xbegin|xend|xabort|xtest|rd[fg]sbase|wr[fg]sbase|tile[a-z]*|ldtilecfg|sttilecfg|clwb|clflushopt|movdir[a-z0-9]*|serialize)$' || true)
         if [ -n "$beyond" ]; then
             printf '%s\n' "$beyond" | awk 'NR <= 6' | tr '\n' ' '
             echo
