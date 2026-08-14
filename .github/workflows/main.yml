@@ -30,7 +30,9 @@ jobs:
         luarocks install busted
 
     - name: Build
-      run: luarocks make
+      # the repository carries upstream's rockspec as well, so name the one
+      # that gets published rather than letting luarocks pick
+      run: luarocks make "$(ls rockspec/*.rockspec | sort -V | tail -n1)"
 
     - name: Check the built module is portable
       shell: bash
