@@ -5,7 +5,7 @@ on:
     branches:
       - "master"
     paths:
-      - 'rockspec/**'
+      - '*.rockspec'
 
 permissions:
   contents: write
@@ -62,4 +62,4 @@ jobs:
           VERSION: ${{ steps.release_env.outputs.version_without_v }}
         run: |
           luarocks install dkjson
-          luarocks upload "rockspec/api7-lua-rapidjson-${VERSION}-0.rockspec" --api-key="${LUAROCKS_TOKEN}"
+          luarocks upload "api7-lua-rapidjson-${VERSION}-0.rockspec" --api-key="${LUAROCKS_TOKEN}"
