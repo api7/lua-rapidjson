@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - "master"
+    paths:
+      - 'rockspec/**'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Lua
+        uses: leafo/gh-actions-lua@v13
+
+      - name: Install Luarocks
+        uses: leafo/gh-actions-luarocks@v6
+
+      - name: Extract release name
+        id: release_env
+        shell: bash
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          title="${COMMIT_MESSAGE}"
+          # tolerate the " (#N)" a squash merge appends to the title
+          re="^feat: release v([^[:space:]]+)"
+          if [[ $title =~ $re ]]; then
+              echo "version=v${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+              echo "version_without_v=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+              echo "commit message must be 'feat: release v<version>'"
+              exit 1
+          fi
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release_env.outputs.version }}
+        run: |
+          # keep this retryable: a failed upload below is re-run with the
+          # release already created
+          if gh release view "${VERSION}" >/dev/null 2>&1; then
+              echo "release ${VERSION} already exists"
+          else
+              gh release create "${VERSION}" --title "${VERSION}" --generate-notes
+          fi
+
+      - name: Upload to luarocks
+        env:
+          LUAROCKS_TOKEN: ${{ secrets.LUAROCKS_TOKEN }}
+          VERSION: ${{ steps.release_env.outputs.version_without_v }}
+        run: |
+          luarocks install dkjson
+          luarocks upload "rockspec/api7-lua-rapidjson-${VERSION}-0.rockspec" --api-key="${LUAROCKS_TOKEN}"
