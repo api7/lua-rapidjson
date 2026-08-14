@@ -32,10 +32,17 @@ if(UNIX)
         set(LINK_FLAGS "-shared")
     endif(APPLE)
     add_compile_options(-g -Wall -fPIC)
-    include(CheckCXXCompilerFlag)
-    CHECK_CXX_COMPILER_FLAG("-march=native" COMPILER_SUPPORTS_ARCH_NATIVE)
-    if (COMPILER_SUPPORTS_ARCH_NATIVE)
-        add_compile_options(-march=native)
+    # -march=native bakes the build host's CPU features into rapidjson.so, so a
+    # module built on a modern machine dies with SIGILL on an older one. Keep it
+    # opt-in: builds that get distributed (packages, images, luarocks) must stay
+    # portable.
+    option(LUA_RAPIDJSON_ARCH_NATIVE "Optimize for the build host CPU; produces a non-portable binary" OFF)
+    if (LUA_RAPIDJSON_ARCH_NATIVE)
+        include(CheckCXXCompilerFlag)
+        CHECK_CXX_COMPILER_FLAG("-march=native" COMPILER_SUPPORTS_ARCH_NATIVE)
+        if (COMPILER_SUPPORTS_ARCH_NATIVE)
+            add_compile_options(-march=native)
+        endif()
     endif()
 else(UNIX)
     if(WIN32)

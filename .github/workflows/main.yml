@@ -29,5 +29,15 @@ jobs:
     - name: Build
       run: luarocks make
 
+    - name: Check the built module is portable
+      run: |
+        # A build that leaks the runner's CPU features (-march=native, see
+        # CMakeLists.txt) dies with SIGILL on older CPUs, and nothing else
+        # catches it until the module is loaded on such a machine.
+        if objdump -d build.luarocks/rapidjson.so | grep -qE '%[yz]mm|vfmadd|vpbroadcast'; then
+            echo "rapidjson.so contains AVX instructions; the build is not portable" >&2
+            exit 1
+        fi
+
     - name: Test
       run: busted
