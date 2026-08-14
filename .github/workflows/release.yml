@@ -47,7 +47,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.release_env.outputs.version }}
-        run: gh release create "${VERSION}" --title "${VERSION}" --generate-notes
+        run: |
+          # keep this retryable: a failed upload below is re-run with the
+          # release already created
+          if gh release view "${VERSION}" >/dev/null 2>&1; then
+              echo "release ${VERSION} already exists"
+          else
+              gh release create "${VERSION}" --title "${VERSION}" --generate-notes
+          fi
 
       - name: Upload to luarocks
         env:

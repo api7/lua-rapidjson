@@ -8,7 +8,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        lua_version: [5.1, 5.2, 5.3, 5.4, luajit-2.1]
+        lua_version: [5.1, 5.2, 5.3, 5.4, luajit-2.0, luajit-2.1]
 
     runs-on: ${{ matrix.os }}
     
@@ -34,18 +34,29 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        # A build that leaks the runner's CPU features (-march=native, see
-        # CMakeLists.txt) dies with SIGILL on older CPUs, and nothing else
-        # catches it until the module is loaded on such a machine. Every
-        # VEX/EVEX encoded instruction has a v- or k-prefixed mnemonic, so
-        # their absence is what makes the module safe to ship.
+        # Anything above the x86-64 baseline (SSE2) makes the module die with
+        # SIGILL on older CPUs, and nothing else catches that until someone
+        # loads it there. The recorded compile flags are the exact check; the
+        # disassembly is the backstop for instructions that arrive by other
+        # means, such as intrinsics behind RAPIDJSON_SSE42.
+        flags=$(grep -h '^CXX_FLAGS' build.luarocks/CMakeFiles/*/flags.make)
+        if grep -qE -- '-m(sse[34]|ssse3|avx|fma|bmi|popcnt|aes|pclmul|f16c|abm|lzcnt|movbe|adx|sha)' <<<"$flags" ||
+           grep -oE -- '-march=[^[:space:]]+' <<<"$flags" | grep -qvE -- '-march=x86-64(-v1)?$'; then
+            echo "$flags"
+            echo "the module is built for a specific CPU, not the x86-64 baseline" >&2
+            exit 1
+        fi
+
         module=build.luarocks/rapidjson.so
         test -f "$module"
-        vex=$(objdump -d --no-show-raw-insn "$module" \
-              | grep -E '^[[:space:]]+[0-9a-f]+:[[:space:]]+[vk][a-z0-9]+' || true)
-        if [ -n "$vex" ]; then
-            printf '%s\n' "$vex" | awk 'NR <= 5'
-            echo "rapidjson.so uses VEX/EVEX encoded instructions; the build is not portable" >&2
+        beyond=$(objdump -d --no-show-raw-insn "$module" \
+            | grep -oE '^[[:space:]]+[0-9a-f]+:[[:space:]]+[a-z][a-z0-9]*' \
+            | awk '{print $2}' | sort -u \
+            | grep -E '^(v[a-z][a-z0-9]*|k[a-z][a-z0-9]*|popcnt|lzcnt|tzcnt|crc32|movbe|adcx|adox|prefetchw|andn|bextr|bls[imr]|bzhi|mulx|pdep|pext|rorx|sarx|shlx|shrx|aes[a-z]*|pclmul[a-z]*|sha1[a-z]*|sha256[a-z]*|pcmp[ei]str[im]|pcmpgtq|ptest|pblendw|pblendvb|blendp[sd]|blendvp[sd]|dpp[sd]|pmov[sz]x[a-z]*|pmulld|pmuldq|packusdw|phminposuw|mpsadbw|movntdqa|round[sp][sd]|insertps|extractps|phadd[a-z]*|phsub[a-z]*|pmaddubsw|pmulhrsw|pabs[bwd]|palignr|pshufb|psign[bwd]|lddqu|movddup|movs[hl]dup|addsubp[sd]|haddp[sd]|hsubp[sd]|pm(in|ax)(s[bd]|u[dw]))$' || true)
+        if [ -n "$beyond" ]; then
+            printf '%s\n' "$beyond" | awk 'NR <= 6' | tr '\n' ' '
+            echo
+            echo "rapidjson.so uses instructions above the x86-64 baseline" >&2
             exit 1
         fi
 
