@@ -88,10 +88,13 @@ See [API reference](API.md).
 
 ## Release Steps
 
+This fork publishes the `api7-lua-rapidjson` rock.
+
 1. Pass all unit tests.
-2. Update version in rapidjson-*.*.*-1.rockspec and update the name of the rockspec file.
-3. Tag source code with that version (v*.*.*), and push.
-4. `luarocks upload rapidjson-*.*.*-1.rockspec`
+2. Rename `api7-lua-rapidjson-*.*.*-0.rockspec` to the new version and update `version` inside it.
+   Keep it the only rockspec in the repository, or `luarocks make` can no longer tell which to build.
+3. Open a PR titled `feat: release v*.*.*` and merge it. The release workflow reads the version from
+   that commit message, tags the source and uploads the rock.
 
 ## Changelog
 
