@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install Lua
         uses: leafo/gh-actions-lua@v13
@@ -31,7 +33,8 @@ jobs:
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           title="${COMMIT_MESSAGE}"
-          re="^feat: release v*(\S+)"
+          # tolerate the " (#N)" a squash merge appends to the title
+          re="^feat: release v([^[:space:]]+)"
           if [[ $title =~ $re ]]; then
               echo "version=v${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
               echo "version_without_v=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"

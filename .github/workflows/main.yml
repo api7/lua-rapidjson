@@ -31,12 +31,21 @@ jobs:
       run: luarocks make
 
     - name: Check the built module is portable
+      shell: bash
       run: |
+        set -euo pipefail
         # A build that leaks the runner's CPU features (-march=native, see
         # CMakeLists.txt) dies with SIGILL on older CPUs, and nothing else
-        # catches it until the module is loaded on such a machine.
-        if objdump -d build.luarocks/rapidjson.so | grep -qE '%[yz]mm|vfmadd|vpbroadcast'; then
-            echo "rapidjson.so contains AVX instructions; the build is not portable" >&2
+        # catches it until the module is loaded on such a machine. Every
+        # VEX/EVEX encoded instruction has a v- or k-prefixed mnemonic, so
+        # their absence is what makes the module safe to ship.
+        module=build.luarocks/rapidjson.so
+        test -f "$module"
+        vex=$(objdump -d --no-show-raw-insn "$module" \
+              | grep -E '^[[:space:]]+[0-9a-f]+:[[:space:]]+[vk][a-z0-9]+' || true)
+        if [ -n "$vex" ]; then
+            printf '%s\n' "$vex" | awk 'NR <= 5'
+            echo "rapidjson.so uses VEX/EVEX encoded instructions; the build is not portable" >&2
             exit 1
         fi
 
