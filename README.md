@@ -21,11 +21,13 @@ bug report and feature request.
 
 ## Usage
 
-    luarocks install rapidjson
+    luarocks install api7-lua-rapidjson
 
 or if you like to use your own version of RapidJSON, use:
 
-    luarocks install rapidjson RAPIDJSON_INCLUDE_DIRS=path/to/rapidjson/include/dir
+    luarocks install api7-lua-rapidjson RAPIDJSON_INCLUDE_DIRS=path/to/rapidjson/include/dir
+
+The rock is named `api7-lua-rapidjson`; the module it installs is still `rapidjson`.
 
 ```Lua
 local rapidjson = require('rapidjson')
